@@ -1,0 +1,39 @@
+services:
+  php:
+    build:
+      context: .
+      dockerfile: docker/php/Dockerfile
+    container_name: msearch-php-prod
+    volumes:
+      - .:/var/www/html
+    environment:
+      APP_ENV: prod
+    restart: unless-stopped
+
+  nginx:
+    image: nginx:alpine
+    container_name: msearch-nginx-prod
+    ports:
+      - "80:80"
+    volumes:
+      - ./docker/nginx/default.conf:/etc/nginx/conf.d/default.conf
+      - .:/var/www/html
+    depends_on:
+      - php
+    restart: unless-stopped
+
+  postgresql:
+    image: postgres:15-alpine
+    container_name: msearch-db-prod
+    environment:
+      POSTGRES_USER: app_user
+      POSTGRES_PASSWORD: app_password
+      POSTGRES_DB: app_db
+    ports:
+      - "5432:5432"
+    volumes:
+      - db-data:/var/lib/postgresql/data
+    restart: unless-stopped
+
+volumes:
+  db-data:

@@ -1,0 +1,155 @@
+<?php
+
+namespace App\Service;
+
+use Symfony\Component\HttpClient\Exception\ClientException;
+use Symfony\Component\HttpClient\Exception\ServerException;
+use Symfony\Component\HttpKernel\Exception\ServiceUnavailableHttpException;
+use Symfony\Component\HttpKernel\Exception\TooManyRequestsHttpException;
+use Symfony\Contracts\HttpClient\HttpClientInterface;
+
+/**
+ * Sends an image to Gemini Vision API and returns a descriptive text
+ * that can be used for product search.
+ */
+class GeminiService
+{
+    // gemini-flash-latest: confirmed alias from check_models.php for v1beta
+    private const API_URL = 'https://generativelanguage.googleapis.com/v1beta/models/gemini-flash-latest:generateContent';
+    private const MAX_IMAGE_SIZE = 512;
+    private const MAX_RETRIES = 3;  // retry up to 3 times on 429
+
+    public function __construct(
+        private readonly HttpClientInterface $httpClient,
+        private readonly string $geminiApiKey
+    ) {}
+
+    /**
+     * Analyzes the given image file and returns a search-friendly description.
+     */
+    public function describeImage(string $imagePath, string $mimeType): string
+    {
+        $imageBase64 = base64_encode($this->resizeImage($imagePath, $mimeType));
+
+        $body = [
+            'contents' => [
+                [
+                    'parts' => [
+                        [
+                            'inline_data' => [
+                                'mime_type' => 'image/jpeg',
+                                'data'      => $imageBase64,
+                            ],
+                        ],
+                        [
+                            'text' => 'Опиши этот товар кратко на русском языке: тип товара, цвет, материал, бренд (если видно). '
+                                . 'Только текст, без оформления, 2-3 предложения.',
+                        ],
+                    ],
+                ],
+            ],
+            'generationConfig' => [
+                'maxOutputTokens' => 256,
+                'temperature'     => 0.2,
+            ],
+        ];
+
+        // Retry loop for rate limits
+        $lastException = null;
+        for ($attempt = 1; $attempt <= self::MAX_RETRIES; $attempt++) {
+            $response = $this->httpClient->request(
+                'POST',
+                self::API_URL . '?key=' . $this->geminiApiKey,
+                [
+                    'headers' => ['Content-Type' => 'application/json'],
+                    'json'    => $body,
+                ]
+            );
+
+            try {
+                $data = $response->toArray();
+                return $data['candidates'][0]['content']['parts'][0]['text'] ?? '';
+            } catch (ClientException|ServerException $e) {
+                $statusCode = $e->getResponse()->getStatusCode();
+                $lastException = $e;
+
+                if ($statusCode === 429 && $attempt < self::MAX_RETRIES) {
+                    // Wait before retry: 5s, 15s
+                    sleep($attempt * 5);
+                    continue;
+                }
+
+                if ($statusCode === 429) {
+                    // Get raw response body for debug info
+                    $errorBody = $e->getResponse()->getContent(false);
+                    throw new TooManyRequestsHttpException(
+                        60,
+                        'Gemini API rate limit exceeded after ' . self::MAX_RETRIES . ' retries. '
+                        . 'Details: ' . $errorBody
+                    );
+                }
+
+                // Any other error — include the raw body
+                $errorBody = $e->getResponse()->getContent(false);
+                throw new ServiceUnavailableHttpException(
+                    null,
+                    sprintf('Gemini API error (HTTP %d): %s', $statusCode, $errorBody)
+                );
+            }
+        }
+
+        throw new ServiceUnavailableHttpException(null, 'Gemini API failed after retries.');
+    }
+
+    /**
+     * Resizes image to max MAX_IMAGE_SIZE px and returns JPEG binary.
+     */
+    private function resizeImage(string $imagePath, string $mimeType): string
+    {
+        if (!extension_loaded('gd')) {
+            return file_get_contents($imagePath);
+        }
+
+        $src = match ($mimeType) {
+            'image/png'  => imagecreatefrompng($imagePath),
+            'image/gif'  => imagecreatefromgif($imagePath),
+            'image/webp' => imagecreatefromwebp($imagePath),
+            default      => imagecreatefromjpeg($imagePath),
+        };
+
+        if ($src === false) {
+            return file_get_contents($imagePath);
+        }
+
+        $origW = imagesx($src);
+        $origH = imagesy($src);
+        $max   = self::MAX_IMAGE_SIZE;
+
+        if ($origW <= $max && $origH <= $max) {
+            ob_start();
+            imagejpeg($src, null, 80);
+            $output = ob_get_clean();
+            imagedestroy($src);
+            return $output;
+        }
+
+        if ($origW >= $origH) {
+            $newW = $max;
+            $newH = (int) round($origH * $max / $origW);
+        } else {
+            $newH = $max;
+            $newW = (int) round($origW * $max / $origH);
+        }
+
+        $dst = imagecreatetruecolor($newW, $newH);
+        imagecopyresampled($dst, $src, 0, 0, 0, 0, $newW, $newH, $origW, $origH);
+        imagedestroy($src);
+
+        ob_start();
+        imagejpeg($dst, null, 80);
+        $output = ob_get_clean();
+        imagedestroy($dst);
+
+        return $output;
+    }
+}
