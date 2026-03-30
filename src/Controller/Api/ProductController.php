@@ -58,6 +58,68 @@ class ProductController extends AbstractController
         return $this->json($this->service->create($request), Response::HTTP_CREATED);
     }
 
+    #[Route('/upload', methods: ['POST'])]
+    #[OA\RequestBody(
+        content: new OA\MediaType(
+            mediaType: 'multipart/form-data',
+            schema: new OA\Schema(
+                properties: [
+                    new OA\Property(property: 'title', type: 'string'),
+                    new OA\Property(property: 'description', type: 'string'),
+                    new OA\Property(property: 'price', type: 'integer'),
+                    new OA\Property(property: 'categoryIds', type: 'array', items: new OA\Items(type: 'integer')),
+                    new OA\Property(property: 'mainPhoto', type: 'string', format: 'binary'),
+                    new OA\Property(property: 'auxiliaryPhotos', type: 'array', items: new OA\Items(type: 'string', format: 'binary')),
+                ]
+            )
+        )
+    )]
+    #[OA\Response(response: 201, description: 'Created product', content: new OA\JsonContent(ref: new Model(type: ProductResponse::class)))]
+    #[OA\Response(response: 401, description: 'Unauthorized')]
+    #[OA\Response(response: 403, description: 'Access Denied')]
+    #[OA\Response(response: 422, description: 'Validation failed')]
+    public function createWithUploads(
+        \Symfony\Component\HttpFoundation\Request $symfonyRequest,
+        \App\Service\FileUploader $fileUploader,
+        \Symfony\Component\Validator\Validator\ValidatorInterface $validator
+    ): JsonResponse {
+        $title = $symfonyRequest->request->get('title');
+        $description = $symfonyRequest->request->get('description');
+        $price = $symfonyRequest->request->get('price');
+        $categoryIds = $symfonyRequest->request->all('categoryIds');
+        
+        $mainPhotoFile = $symfonyRequest->files->get('mainPhoto');
+        $auxiliaryPhotoFiles = $symfonyRequest->files->all('auxiliaryPhotos');
+
+        if (!$mainPhotoFile instanceof \Symfony\Component\HttpFoundation\File\UploadedFile) {
+            return $this->json(['error' => 'mainPhoto is required and must be a valid file'], Response::HTTP_UNPROCESSABLE_ENTITY);
+        }
+
+        $mainPhotoUrl = $fileUploader->upload($mainPhotoFile);
+        $auxiliaryPhotoUrls = [];
+        foreach ($auxiliaryPhotoFiles as $file) {
+            if ($file instanceof \Symfony\Component\HttpFoundation\File\UploadedFile) {
+                $auxiliaryPhotoUrls[] = $fileUploader->upload($file);
+            }
+        }
+
+        $dto = new ProductRequest(
+            title: (string)$title,
+            description: (string)$description,
+            mainPhoto: $mainPhotoUrl,
+            auxiliaryPhotos: $auxiliaryPhotoUrls,
+            categoryIds: array_map('intval', (array)$categoryIds),
+            price: $price !== null ? (int)$price : null
+        );
+
+        $errors = $validator->validate($dto);
+        if (count($errors) > 0) {
+            return $this->json($errors, Response::HTTP_UNPROCESSABLE_ENTITY);
+        }
+
+        return $this->json($this->service->create($dto), Response::HTTP_CREATED);
+    }
+
     #[Route('/{id}', methods: ['PUT'])]
     #[OA\RequestBody(content: new OA\JsonContent(ref: new Model(type: ProductRequest::class)))]
     #[OA\Response(

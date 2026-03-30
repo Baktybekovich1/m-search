@@ -11,6 +11,7 @@ parameters:
     env(STRIPE_PUBLIC_KEY): ''
     env(STRIPE_SECRET_KEY): ''
     env(STRIPE_WEBHOOK_SECRET): ''
+    product_uploads_directory: '%kernel.project_dir%/public/uploads/products'
 
 services:
     # default configuration for services in *this* file
