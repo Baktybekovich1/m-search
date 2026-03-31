@@ -9,11 +9,14 @@ use Doctrine\ORM\EntityManagerInterface;
 use Stripe\Checkout\Session;
 use Stripe\Stripe;
 use Stripe\Webhook;
+use Symfony\Component\Mailer\MailerInterface;
+use Symfony\Component\Mime\Email;
 
 class StripeService
 {
     public function __construct(
         private readonly EntityManagerInterface $entityManager,
+        private readonly MailerInterface $mailer,
         private readonly string $stripeSecretKey,
         private readonly string $webhookSecret
     ) {
@@ -25,6 +28,9 @@ class StripeService
         $session = Session::create([
             'payment_method_types' => ['card'],
             'customer_email' => $user->getEmail(),
+            'shipping_address_collection' => [
+                'allowed_countries' => ['US', 'CA', 'GB', 'RU', 'KZ', 'KG', 'UZ', 'UA', 'BY', 'DE', 'FR', 'IT', 'ES', 'CN', 'JP', 'IN', 'TR'],
+            ],
             'line_items' => [[
                 'price_data' => [
                     'currency' => 'usd',
@@ -75,6 +81,36 @@ class StripeService
             if ($payment) {
                 $payment->setStatus('completed');
                 $this->entityManager->flush();
+
+                $shipping = $session->shipping_details;
+                $address = $shipping ? $shipping->address : null;
+                $addressParts = [];
+                if ($address) {
+                    if ($address->line1) $addressParts[] = $address->line1;
+                    if ($address->line2) $addressParts[] = $address->line2;
+                    if ($address->city) $addressParts[] = $address->city;
+                    if ($address->state) $addressParts[] = $address->state;
+                    if ($address->postal_code) $addressParts[] = $address->postal_code;
+                    if ($address->country) $addressParts[] = $address->country;
+                }
+                $addressString = !empty($addressParts) ? implode(', ', $addressParts) : 'Не указан';
+
+                $customerEmail = $session->customer_details->email ?? $session->customer_email;
+                $productName = $payment->getProduct()->getTitle();
+
+                if ($customerEmail) {
+                    $email = (new Email())
+                        ->from('noreply@msearch.com')
+                        ->to($customerEmail)
+                        ->subject('Заказ принят')
+                        ->text(sprintf(
+                            "Ваш заказ принят.\n\nВы купили: %s\nОжидайте товар по адресу: %s\n\nСпасибо за покупку!",
+                            $productName,
+                            $addressString
+                        ));
+
+                    $this->mailer->send($email);
+                }
             }
         }
     }
