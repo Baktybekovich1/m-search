@@ -59,6 +59,15 @@ class AuthController extends AbstractController {
             )
         )
     )]
+    #[OA\Response(
+        response: 200,
+        description: 'Returns JWT token',
+        content: new OA\JsonContent(
+            properties: [
+                new OA\Property(property: 'token', type: 'string')
+            ]
+        )
+    )]
     public function login(): void {
         // This endpoint is handled by LexikJWTAuthenticationBundle
     }

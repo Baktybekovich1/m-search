@@ -3,7 +3,9 @@
 namespace App\Controller\Api;
 
 use App\DTO\Request\CreateOrderRequest;
+use App\Entity\User;
 use App\Service\OrderService;
+use Nelmio\ApiDocBundle\Attribute\Model;
 use Symfony\Bundle\FrameworkBundle\Controller\AbstractController;
 use Symfony\Component\HttpFoundation\JsonResponse;
 use Symfony\Component\HttpKernel\Attribute\MapRequestPayload;
@@ -22,7 +24,7 @@ class OrderController extends AbstractController
     #[OA\Post(summary: 'Create a new order')]
     #[OA\RequestBody(
         content: new OA\JsonContent(
-            ref: '#/components/schemas/CreateOrderRequest'
+            ref: new Model(type: CreateOrderRequest::class)
         )
     )]
     #[OA\Response(response: 201, description: 'Order created')]
@@ -31,7 +33,7 @@ class OrderController extends AbstractController
         #[MapRequestPayload] CreateOrderRequest $request
     ): JsonResponse {
         $user = $this->getUser();
-        if (!$user) {
+        if (!$user instanceof User) {
             return $this->json(['error' => 'Unauthorized'], 401);
         }
 
@@ -55,7 +57,7 @@ class OrderController extends AbstractController
     public function history(): JsonResponse
     {
         $user = $this->getUser();
-        if (!$user) {
+        if (!$user instanceof User) {
             return $this->json(['error' => 'Unauthorized'], 401);
         }
 
