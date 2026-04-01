@@ -57,15 +57,15 @@ class User implements UserInterface, PasswordAuthenticatedUserInterface
     private Collection $products;
 
     /**
-     * @var Collection<int, Payment>
+     * @var Collection<int, Order>
      */
-    #[ORM\OneToMany(mappedBy: 'user', targetEntity: Payment::class, orphanRemoval: true)]
-    private Collection $payments;
+    #[ORM\OneToMany(mappedBy: 'user', targetEntity: Order::class, orphanRemoval: true)]
+    private Collection $orders;
 
     public function __construct()
     {
         $this->products = new ArrayCollection();
-        $this->payments = new ArrayCollection();
+        $this->orders = new ArrayCollection();
     }
 
     public function getId(): ?int
@@ -234,29 +234,29 @@ class User implements UserInterface, PasswordAuthenticatedUserInterface
     }
 
     /**
-     * @return Collection<int, Payment>
+     * @return Collection<int, Order>
      */
-    public function getPayments(): Collection
+    public function getOrders(): Collection
     {
-        return $this->payments;
+        return $this->orders;
     }
 
-    public function addPayment(Payment $payment): static
+    public function addOrder(Order $order): static
     {
-        if (!$this->payments->contains($payment)) {
-            $this->payments->add($payment);
-            $payment->setUser($this);
+        if (!$this->orders->contains($order)) {
+            $this->orders->add($order);
+            $order->setUser($this);
         }
 
         return $this;
     }
 
-    public function removePayment(Payment $payment): static
+    public function removeOrder(Order $order): static
     {
-        if ($this->payments->removeElement($payment)) {
+        if ($this->orders->removeElement($order)) {
             // set the owning side to null (unless already changed)
-            if ($payment->getUser() === $this) {
-                $payment->setUser(null);
+            if ($order->getUser() === $this) {
+                $order->setUser(null);
             }
         }
 

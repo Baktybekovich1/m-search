@@ -2,24 +2,29 @@
 
 namespace App\Entity;
 
-use App\Repository\PaymentRepository;
+use App\Repository\OrderRepository;
+use Doctrine\Common\Collections\ArrayCollection;
+use Doctrine\Common\Collections\Collection;
 use Doctrine\ORM\Mapping as ORM;
 
-#[ORM\Entity(repositoryClass: PaymentRepository::class)]
-class Payment
+#[ORM\Entity(repositoryClass: OrderRepository::class)]
+#[ORM\Table(name: '`order`')]
+class Order
 {
     #[ORM\Id]
     #[ORM\GeneratedValue]
     #[ORM\Column]
     private ?int $id = null;
 
-    #[ORM\ManyToOne(inversedBy: 'payments')]
+    #[ORM\ManyToOne(inversedBy: 'orders')]
     #[ORM\JoinColumn(nullable: false)]
     private ?User $user = null;
 
-    #[ORM\ManyToOne]
-    #[ORM\JoinColumn(nullable: false)]
-    private ?Product $product = null;
+    /**
+     * @var Collection<int, Product>
+     */
+    #[ORM\ManyToMany(targetEntity: Product::class)]
+    private Collection $products;
 
     #[ORM\Column]
     private ?int $amount = null; // in cents
@@ -28,10 +33,10 @@ class Payment
     private ?string $currency = 'usd';
 
     #[ORM\Column(length: 20)]
-    private ?string $status = 'pending'; // pending, completed, failed
+    private ?string $status = 'completed'; // completed, pending, failed
 
-    #[ORM\Column(length: 255, unique: true)]
-    private ?string $stripeSessionId = null;
+    #[ORM\Column(length: 500)]
+    private ?string $address = null;
 
     #[ORM\Column]
     private ?\DateTimeImmutable $createdAt = null;
@@ -39,6 +44,7 @@ class Payment
     public function __construct()
     {
         $this->createdAt = new \DateTimeImmutable();
+        $this->products = new ArrayCollection();
     }
 
     public function getId(): ?int
@@ -57,14 +63,25 @@ class Payment
         return $this;
     }
 
-    public function getProduct(): ?Product
+    /**
+     * @return Collection<int, Product>
+     */
+    public function getProducts(): Collection
     {
-        return $this->product;
+        return $this->products;
     }
 
-    public function setProduct(?Product $product): static
+    public function addProduct(Product $product): static
     {
-        $this->product = $product;
+        if (!$this->products->contains($product)) {
+            $this->products->add($product);
+        }
+        return $this;
+    }
+
+    public function removeProduct(Product $product): static
+    {
+        $this->products->removeElement($product);
         return $this;
     }
 
@@ -101,14 +118,14 @@ class Payment
         return $this;
     }
 
-    public function getStripeSessionId(): ?string
+    public function getAddress(): ?string
     {
-        return $this->stripeSessionId;
+        return $this->address;
     }
 
-    public function setStripeSessionId(string $stripeSessionId): static
+    public function setAddress(string $address): static
     {
-        $this->stripeSessionId = $stripeSessionId;
+        $this->address = $address;
         return $this;
     }
 
