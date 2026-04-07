@@ -1,0 +1,61 @@
+import paramiko
+import os
+import secrets
+import string
+
+HOST = '45.144.222.33'
+USER = 'root'
+PASS = 'wmM@S_cEvK5V8o'
+PROJECT_DIR = '/opt/msearch'
+
+def run_it(ssh, cmd):
+    print(f"Executing: {cmd}")
+    stdin, stdout, stderr = ssh.exec_command(cmd, timeout=30)
+    # Read output and error but don't hang indefinitely
+    out = stdout.read().decode('utf-8')
+    err = stderr.read().decode('utf-8')
+    if out: print(out)
+    if err: print(f"Error: {err}")
+    return out
+
+try:
+    ssh = paramiko.SSHClient()
+    ssh.set_missing_host_key_policy(paramiko.AutoAddPolicy())
+    ssh.connect(HOST, username=USER, password=PASS, timeout=10)
+    
+    sftp = ssh.open_sftp()
+    
+    # 1. Upload RedirectController.php
+    local_path = '/home/akai/projects/symfony/msearch/src/Controller/RedirectController.php'
+    remote_path = f'{PROJECT_DIR}/src/Controller/RedirectController.php'
+    print(f"Uploading {local_path} to {remote_path}")
+    sftp.put(local_path, remote_path)
+    
+    # 2. Update .env with APP_SECRET
+    print("Updating .env")
+    env_path = f'{PROJECT_DIR}/.env'
+    with sftp.file(env_path, 'r') as f:
+        content = f.read().decode('utf-8')
+    
+    import re
+    new_secret = ''.join(secrets.choice(string.ascii_letters + string.digits) for _ in range(32))
+    
+    if 'APP_SECRET=' in content:
+        content = re.sub(r'APP_SECRET=.*', f'APP_SECRET={new_secret}', content)
+    else:
+        content = re.sub(r'(APP_ENV=.*)', f'\\1\nAPP_SECRET={new_secret}', content)
+    
+    with sftp.file(env_path, 'w') as f:
+        f.write(content.encode('utf-8'))
+    
+    sftp.close()
+    
+    # 3. Clear cache
+    print("Clearing cache...")
+    run_it(ssh, f"docker exec msearch-php-prod php bin/console cache:clear --env=prod")
+    run_it(ssh, f"docker exec msearch-php-prod php bin/console cache:warmup --env=prod")
+    
+    ssh.close()
+    print("Done!")
+except Exception as e:
+    print(f"Error: {e}")
