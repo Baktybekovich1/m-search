@@ -32,9 +32,9 @@ try:
     sftp.put('.env', f'{REMOTE_PATH}/.env')
     sftp.close()
 
-    # 3. Restart containers
-    print("\nRestarting containers with new configuration...")
-    run_remote(ssh, f"cd {REMOTE_PATH} && docker-compose -f docker-compose.prod.yml up -d --force-recreate")
+    # 3. Restart containers and rebuild
+    print("\nRestarting containers and rebuilding with new configuration...")
+    run_remote(ssh, f"cd {REMOTE_PATH} && git pull origin master && docker-compose -f docker-compose.prod.yml up -d --build --force-recreate")
 
     # 4. Clear cache inside container
     print("\nClearing Symfony cache in container...")
