@@ -9,7 +9,13 @@ services:
     environment:
       APP_ENV: prod
       DATABASE_URL: "postgresql://app:${POSTGRES_PASSWORD:-aowfhwopjfijanfoawkf}@postgresql:5432/app?serverVersion=16&charset=utf8"
-      GEMINI_API_KEY: ${GEMINI_API_KEY}
+      AI_PROVIDER: ${AI_PROVIDER:-ollama}
+      GEMINI_API_KEY: ${GEMINI_API_KEY:-}
+      OLLAMA_BASE_URL: ${OLLAMA_BASE_URL:-http://ollama:11434}
+      OLLAMA_MODEL: ${OLLAMA_MODEL:-moondream}
+    depends_on:
+      - postgresql
+      - ollama
     restart: unless-stopped
 
   nginx:
@@ -48,6 +54,16 @@ services:
       - db-data:/var/lib/postgresql/data
     restart: unless-stopped
 
+  ollama:
+    image: ollama/ollama:latest
+    container_name: msearch-ollama-prod
+    ports:
+      - "11434:11434"
+    volumes:
+      - ollama-data:/root/.ollama
+    restart: unless-stopped
+
 volumes:
   db-data:
   certbot-www:
+  ollama-data:

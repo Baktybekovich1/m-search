@@ -7,7 +7,10 @@
 # Put parameters here that don't need to change on each machine where the app is deployed
 # https://symfony.com/doc/current/best_practices.html#use-parameters-for-application-configuration
 parameters:
+    env(AI_PROVIDER): 'gemini'
     env(GEMINI_API_KEY): ''
+    env(OLLAMA_BASE_URL): 'http://host.docker.internal:11434'
+    env(OLLAMA_MODEL): 'minicpm-v:8b-2.6-q3_K_L'
     product_uploads_directory: '%kernel.project_dir%/public/uploads/products'
 
 services:
@@ -27,6 +30,9 @@ services:
     App\Service\GeminiService:
         arguments:
             $geminiApiKey: '%env(GEMINI_API_KEY)%'
+            $aiProvider: '%env(AI_PROVIDER)%'
+            $ollamaBaseUrl: '%env(OLLAMA_BASE_URL)%'
+            $ollamaModel: '%env(OLLAMA_MODEL)%'
 
     App\Service\FileUploader:
         arguments:

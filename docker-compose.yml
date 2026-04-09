@@ -10,6 +10,8 @@ services:
       - .:/var/www/html
     # In local development, we want to run only php, so we use the built-in server instead of fpm
     command: php -S 0.0.0.0:8000 -t public/
+    depends_on:
+      - ollama
 
   ###> doctrine/doctrine-bundle ###
   database:
@@ -38,6 +40,14 @@ services:
       - "1025:1025"
       - "8025:8025"
 
+  ollama:
+    image: ollama/ollama:latest
+    ports:
+      - "11434:11434"
+    volumes:
+      - ollama_data:/root/.ollama
+
 volumes:
   ###> doctrine/doctrine-bundle ###
   database_data: ###< doctrine/doctrine-bundle ###
+  ollama_data:

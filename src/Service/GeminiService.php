@@ -16,6 +16,11 @@ use Symfony\Contracts\HttpClient\HttpClientInterface;
  */
 class GeminiService
 {
+    private const PROMPT = 'Опиши этот товар кратко на русском языке: тип товара, цвет, материал, бренд (если видно). '
+        . 'Только текст, без оформления, 2-3 предложения.';
+    private const PROVIDER_GEMINI = 'gemini';
+    private const PROVIDER_OLLAMA = 'ollama';
+    private const OLLAMA_TIMEOUT_SECONDS = 120;
     // gemini-flash-latest: confirmed alias from check_models.php for v1beta
     private const API_URL = 'https://generativelanguage.googleapis.com/v1beta/models/gemini-3-flash-preview:generateContent';
     private const MAX_IMAGE_SIZE = 512;
@@ -24,7 +29,10 @@ class GeminiService
     public function __construct(
         private readonly HttpClientInterface $httpClient,
         private readonly LoggerInterface $logger,
-        private readonly string $geminiApiKey
+        private readonly string $geminiApiKey,
+        private readonly string $aiProvider,
+        private readonly string $ollamaBaseUrl,
+        private readonly string $ollamaModel,
     ) {}
 
     /**
@@ -38,16 +46,24 @@ class GeminiService
             throw new ServiceUnavailableHttpException(null, 'Failed to process image data.');
         }
 
-        $imageBase64 = base64_encode($imageData);
         $actualMimeType = extension_loaded('gd') ? 'image/jpeg' : $mimeType;
+
+        return match ($this->aiProvider) {
+            self::PROVIDER_OLLAMA => $this->describeWithOllama($imageData),
+            default => $this->describeWithGemini($imageData, $actualMimeType),
+        };
+    }
+
+    private function describeWithGemini(string $imageData, string $mimeType): string
+    {
+        $imageBase64 = base64_encode($imageData);
 
         $body = [
             'contents' => [
                 [
                     'parts' => [
-                        ['inline_data' => ['mime_type' => $actualMimeType, 'data' => $imageBase64]],
-                        ['text' => 'Опиши этот товар кратко на русском языке: тип товара, цвет, материал, бренд (если видно). '
-                                . 'Только текст, без оформления, 2-3 предложения.'],
+                        ['inline_data' => ['mime_type' => $mimeType, 'data' => $imageBase64]],
+                        ['text' => self::PROMPT],
                     ],
                 ],
             ],
@@ -127,6 +143,74 @@ class GeminiService
         }
 
         throw new ServiceUnavailableHttpException(null, 'Gemini API failed after all retries.');
+    }
+
+    private function describeWithOllama(string $imageData): string
+    {
+        try {
+            $response = $this->httpClient->request(
+                'POST',
+                rtrim($this->ollamaBaseUrl, '/') . '/api/generate',
+                [
+                    'headers' => ['Content-Type' => 'application/json'],
+                    'json' => [
+                        'model' => $this->ollamaModel,
+                        'prompt' => self::PROMPT,
+                        'images' => [base64_encode($imageData)],
+                        'stream' => false,
+                        'keep_alive' => '10m',
+                    ],
+                    'timeout' => self::OLLAMA_TIMEOUT_SECONDS,
+                ]
+            );
+
+            $data = $response->toArray();
+            $text = trim((string) ($data['response'] ?? ''));
+
+            if ($text === '') {
+                $this->logger->warning('Ollama returned no text', [
+                    'model' => $this->ollamaModel,
+                    'data' => $data,
+                ]);
+
+                return '';
+            }
+
+            return $text;
+        } catch (ClientException|ServerException $e) {
+            $statusCode = $e->getResponse()->getStatusCode();
+            $errorBody = $e->getResponse()->getContent(false);
+
+            $this->logger->error('Ollama API error', [
+                'status_code' => $statusCode,
+                'error' => $errorBody,
+                'model' => $this->ollamaModel,
+                'base_url' => $this->ollamaBaseUrl,
+            ]);
+
+            if ($statusCode === 404) {
+                throw new ServiceUnavailableHttpException(
+                    null,
+                    sprintf('Ollama model "%s" is not available. Run "ollama pull %s".', $this->ollamaModel, $this->ollamaModel)
+                );
+            }
+
+            throw new ServiceUnavailableHttpException(
+                null,
+                sprintf('Ollama API error (HTTP %d).', $statusCode)
+            );
+        } catch (TransportExceptionInterface $e) {
+            $this->logger->error('Ollama transport error', [
+                'error' => $e->getMessage(),
+                'model' => $this->ollamaModel,
+                'base_url' => $this->ollamaBaseUrl,
+            ]);
+
+            throw new ServiceUnavailableHttpException(
+                null,
+                'Ollama is unreachable. Start Ollama and check OLLAMA_BASE_URL.'
+            );
+        }
     }
 
     /**
