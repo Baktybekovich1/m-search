@@ -19,7 +19,7 @@ class GeminiService
     // gemini-flash-latest: confirmed alias from check_models.php for v1beta
     private const API_URL = 'https://generativelanguage.googleapis.com/v1beta/models/gemini-3-flash-preview:generateContent';
     private const MAX_IMAGE_SIZE = 512;
-    private const MAX_RETRIES = 3;  // retry up to 3 times on 429
+    private const MAX_RETRIES = 5;  // Increased to 5 for better stability
 
     public function __construct(
         private readonly HttpClientInterface $httpClient,
@@ -39,25 +39,15 @@ class GeminiService
         }
 
         $imageBase64 = base64_encode($imageData);
-
-        // If GD is available, resizeImage returns image/jpeg.
-        // Otherwise it returns the original file contents.
         $actualMimeType = extension_loaded('gd') ? 'image/jpeg' : $mimeType;
 
         $body = [
             'contents' => [
                 [
                     'parts' => [
-                        [
-                            'inline_data' => [
-                                'mime_type' => $actualMimeType,
-                                'data'      => $imageBase64,
-                            ],
-                        ],
-                        [
-                            'text' => 'Опиши этот товар кратко на русском языке: тип товара, цвет, материал, бренд (если видно). '
-                                . 'Только текст, без оформления, 2-3 предложения.',
-                        ],
+                        ['inline_data' => ['mime_type' => $actualMimeType, 'data' => $imageBase64]],
+                        ['text' => 'Опиши этот товар кратко на русском языке: тип товара, цвет, материал, бренд (если видно). '
+                                . 'Только текст, без оформления, 2-3 предложения.'],
                     ],
                 ],
             ],
@@ -67,9 +57,10 @@ class GeminiService
             ],
         ];
 
-        // Retry loop for rate limits
-        $lastException = null;
         for ($attempt = 1; $attempt <= self::MAX_RETRIES; $attempt++) {
+            $errorBody = null;
+            $statusCode = 0;
+
             try {
                 $response = $this->httpClient->request(
                     'POST',
@@ -81,35 +72,41 @@ class GeminiService
                 );
 
                 $data = $response->toArray();
-                return $data['candidates'][0]['content']['parts'][0]['text'] ?? '';
+                $text = $data['candidates'][0]['content']['parts'][0]['text'] ?? null;
+                
+                if ($text === null) {
+                    $finishReason = $data['candidates'][0]['finishReason'] ?? 'UNKNOWN';
+                    $this->logger->warning('Gemini returned no text', [
+                        'finishReason' => $finishReason,
+                        'data' => $data
+                    ]);
+                    return '';
+                }
+
+                return $text;
             } catch (ClientException|ServerException $e) {
                 $statusCode = $e->getResponse()->getStatusCode();
-                $lastException = $e;
                 $errorBody = $e->getResponse()->getContent(false);
-
-                // Log the error for production debugging
                 $this->logger->error('Gemini API error', [
                     'status_code' => $statusCode,
                     'error' => $errorBody,
                     'attempt' => $attempt
                 ]);
 
-                // Retry on 429 (Rate Limit) and 503 (Service Unavailable / High Demand)
                 if (in_array($statusCode, [429, 503]) && $attempt < self::MAX_RETRIES) {
-                    // Wait before retry: 5s, 10s, 15s...
-                    sleep($attempt * 5);
+                    $wait = $this->getRetryDelay($errorBody) ?: ($attempt * 5);
+                    sleep($wait);
                     continue;
                 }
 
                 if ($statusCode === 429) {
+                    $retryAfter = $this->getRetryDelay($errorBody) ?: 60;
                     throw new TooManyRequestsHttpException(
-                        60,
-                        'Gemini API rate limit exceeded after ' . self::MAX_RETRIES . ' retries. '
-                        . 'Details: ' . $errorBody
+                        $retryAfter,
+                        'Gemini API rate limit exceeded. Please retry later or increase Gemini quota/billing.'
                     );
                 }
 
-                // Any other error — include the raw body
                 throw new ServiceUnavailableHttpException(
                     null,
                     sprintf('Gemini API error (HTTP %d): %s', $statusCode, $errorBody)
@@ -125,14 +122,33 @@ class GeminiService
                     continue;
                 }
 
-                throw new ServiceUnavailableHttpException(
-                    null,
-                    'Gemini API is unreachable. Please try again later.'
-                );
+                throw new ServiceUnavailableHttpException(null, 'Gemini API is unreachable. Please try again later.');
             }
         }
 
-        throw new ServiceUnavailableHttpException(null, 'Gemini API failed after retries.');
+        throw new ServiceUnavailableHttpException(null, 'Gemini API failed after all retries.');
+    }
+
+    /**
+     * Parses the retry delay from Google API error details if present.
+     */
+    private function getRetryDelay(string $errorBody): int
+    {
+        $decoded = json_decode($errorBody, true);
+        if (!is_array($decoded)) {
+            return 0;
+        }
+
+        foreach (($decoded['error']['details'] ?? []) as $detail) {
+            if (($detail['@type'] ?? '') === 'type.googleapis.com/google.rpc.RetryInfo') {
+                $retryDelay = (string) ($detail['retryDelay'] ?? '');
+                if (preg_match('/^(\d+)s$/', $retryDelay, $matches) === 1) {
+                    return (int) $matches[1];
+                }
+            }
+        }
+
+        return 0;
     }
 
     /**

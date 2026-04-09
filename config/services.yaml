@@ -26,9 +26,7 @@ services:
 
     App\Service\GeminiService:
         arguments:
-            - '@http_client'
-            - '@logger'
-            - '%env(GEMINI_API_KEY)%'
+            $geminiApiKey: '%env(GEMINI_API_KEY)%'
 
     App\Service\FileUploader:
         arguments:
