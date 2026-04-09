@@ -2,6 +2,7 @@
 
 namespace App\Service;
 
+use Psr\Log\LoggerInterface;
 use Symfony\Component\HttpClient\Exception\ClientException;
 use Symfony\Component\HttpClient\Exception\ServerException;
 use Symfony\Component\HttpKernel\Exception\ServiceUnavailableHttpException;
@@ -15,12 +16,13 @@ use Symfony\Contracts\HttpClient\HttpClientInterface;
 class GeminiService
 {
     // gemini-flash-latest: confirmed alias from check_models.php for v1beta
-    private const API_URL = 'https://generativelanguage.googleapis.com/v1beta/models/gemini-flash-latest:generateContent';
+    private const API_URL = 'https://generativelanguage.googleapis.com/v1beta/models/gemini-3-flash-preview:generateContent';
     private const MAX_IMAGE_SIZE = 512;
     private const MAX_RETRIES = 3;  // retry up to 3 times on 429
 
     public function __construct(
         private readonly HttpClientInterface $httpClient,
+        private readonly LoggerInterface $logger,
         private readonly string $geminiApiKey
     ) {}
 
@@ -29,7 +31,12 @@ class GeminiService
      */
     public function describeImage(string $imagePath, string $mimeType): string
     {
-        $imageBase64 = base64_encode($this->resizeImage($imagePath, $mimeType));
+        $imageData = $this->resizeImage($imagePath, $mimeType);
+        $imageBase64 = base64_encode($imageData);
+
+        // If GD is available, resizeImage returns image/jpeg.
+        // Otherwise it returns the original file contents.
+        $actualMimeType = extension_loaded('gd') ? 'image/jpeg' : $mimeType;
 
         $body = [
             'contents' => [
@@ -37,7 +44,7 @@ class GeminiService
                     'parts' => [
                         [
                             'inline_data' => [
-                                'mime_type' => 'image/jpeg',
+                                'mime_type' => $actualMimeType,
                                 'data'      => $imageBase64,
                             ],
                         ],
@@ -72,16 +79,23 @@ class GeminiService
             } catch (ClientException|ServerException $e) {
                 $statusCode = $e->getResponse()->getStatusCode();
                 $lastException = $e;
+                $errorBody = $e->getResponse()->getContent(false);
 
-                if ($statusCode === 429 && $attempt < self::MAX_RETRIES) {
-                    // Wait before retry: 5s, 15s
+                // Log the error for production debugging
+                $this->logger->error('Gemini API error', [
+                    'status_code' => $statusCode,
+                    'error' => $errorBody,
+                    'attempt' => $attempt
+                ]);
+
+                // Retry on 429 (Rate Limit) and 503 (Service Unavailable / High Demand)
+                if (in_array($statusCode, [429, 503]) && $attempt < self::MAX_RETRIES) {
+                    // Wait before retry: 5s, 10s, 15s...
                     sleep($attempt * 5);
                     continue;
                 }
 
                 if ($statusCode === 429) {
-                    // Get raw response body for debug info
-                    $errorBody = $e->getResponse()->getContent(false);
                     throw new TooManyRequestsHttpException(
                         60,
                         'Gemini API rate limit exceeded after ' . self::MAX_RETRIES . ' retries. '
@@ -90,7 +104,6 @@ class GeminiService
                 }
 
                 // Any other error — include the raw body
-                $errorBody = $e->getResponse()->getContent(false);
                 throw new ServiceUnavailableHttpException(
                     null,
                     sprintf('Gemini API error (HTTP %d): %s', $statusCode, $errorBody)
