@@ -5,6 +5,7 @@ namespace App\Service;
 use Psr\Log\LoggerInterface;
 use Symfony\Component\HttpClient\Exception\ClientException;
 use Symfony\Component\HttpClient\Exception\ServerException;
+use Symfony\Contracts\HttpClient\Exception\TransportExceptionInterface;
 use Symfony\Component\HttpKernel\Exception\ServiceUnavailableHttpException;
 use Symfony\Component\HttpKernel\Exception\TooManyRequestsHttpException;
 use Symfony\Contracts\HttpClient\HttpClientInterface;
@@ -69,16 +70,16 @@ class GeminiService
         // Retry loop for rate limits
         $lastException = null;
         for ($attempt = 1; $attempt <= self::MAX_RETRIES; $attempt++) {
-            $response = $this->httpClient->request(
-                'POST',
-                self::API_URL . '?key=' . $this->geminiApiKey,
-                [
-                    'headers' => ['Content-Type' => 'application/json'],
-                    'json'    => $body,
-                ]
-            );
-
             try {
+                $response = $this->httpClient->request(
+                    'POST',
+                    self::API_URL . '?key=' . $this->geminiApiKey,
+                    [
+                        'headers' => ['Content-Type' => 'application/json'],
+                        'json'    => $body,
+                    ]
+                );
+
                 $data = $response->toArray();
                 return $data['candidates'][0]['content']['parts'][0]['text'] ?? '';
             } catch (ClientException|ServerException $e) {
@@ -112,6 +113,21 @@ class GeminiService
                 throw new ServiceUnavailableHttpException(
                     null,
                     sprintf('Gemini API error (HTTP %d): %s', $statusCode, $errorBody)
+                );
+            } catch (TransportExceptionInterface $e) {
+                $this->logger->error('Gemini transport error', [
+                    'attempt' => $attempt,
+                    'error' => $e->getMessage(),
+                ]);
+
+                if ($attempt < self::MAX_RETRIES) {
+                    sleep($attempt * 2);
+                    continue;
+                }
+
+                throw new ServiceUnavailableHttpException(
+                    null,
+                    'Gemini API is unreachable. Please try again later.'
                 );
             }
         }
