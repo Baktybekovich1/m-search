@@ -15,7 +15,8 @@ RUN apt-get update && apt-get install -y \
 
 # Install PHP extensions required for Symfony and PostgreSQL
 RUN docker-php-ext-configure gd --with-freetype --with-jpeg \
-    && docker-php-ext-install pdo pdo_pgsql intl zip opcache gd
+    && docker-php-ext-install pdo pdo_pgsql intl zip opcache gd \
+    && echo "max_execution_time = 300" >> /usr/local/etc/php/conf.d/docker-php-ext-max-execution-time.ini
 
 # Install Composer
 COPY --from=composer:latest /usr/bin/composer /usr/bin/composer
