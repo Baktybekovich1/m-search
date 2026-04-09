@@ -32,6 +32,11 @@ class GeminiService
     public function describeImage(string $imagePath, string $mimeType): string
     {
         $imageData = $this->resizeImage($imagePath, $mimeType);
+        if (empty($imageData)) {
+            $this->logger->error('Failed to read or resize image file', ['path' => $imagePath]);
+            throw new ServiceUnavailableHttpException(null, 'Failed to process image data.');
+        }
+
         $imageBase64 = base64_encode($imageData);
 
         // If GD is available, resizeImage returns image/jpeg.
