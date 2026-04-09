@@ -41,9 +41,8 @@ class ProductService
 
     public function create(ProductRequest $request): ProductResponse
     {
-        /** @var User|null $user */
         $user = $this->security->getUser();
-        if (!$user) {
+        if (!$user instanceof User) {
             throw new AccessDeniedHttpException('You must be logged in to create a product.');
         }
 

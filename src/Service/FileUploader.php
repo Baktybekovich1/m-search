@@ -19,6 +19,10 @@ class FileUploader
 
     public function upload(UploadedFile $file): string
     {
+        if (!is_dir($this->targetDirectory) && !mkdir($concurrentDirectory = $this->targetDirectory, 0775, true) && !is_dir($concurrentDirectory)) {
+            throw new \RuntimeException('Failed to create upload directory: ' . $this->targetDirectory);
+        }
+
         $originalFilename = pathinfo($file->getClientOriginalName(), PATHINFO_FILENAME);
         $safeFilename = $this->slugger->slug($originalFilename);
         $fileName = $safeFilename . '-' . uniqid() . '.' . $file->guessExtension();

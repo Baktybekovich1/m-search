@@ -86,10 +86,20 @@ class ProductController extends AbstractController
         $title = $symfonyRequest->request->get('title');
         $description = $symfonyRequest->request->get('description');
         $price = $symfonyRequest->request->get('price');
-        $categoryIds = $symfonyRequest->request->all('categoryIds');
-        
+
+        $formData = $symfonyRequest->request->all();
+        $rawCategoryIds = $formData['categoryIds'] ?? [];
+        $categoryIds = match (true) {
+            is_array($rawCategoryIds) => $rawCategoryIds,
+            is_string($rawCategoryIds) && $rawCategoryIds !== '' => array_map('trim', explode(',', $rawCategoryIds)),
+            default => [],
+        };
+
         $mainPhotoFile = $symfonyRequest->files->get('mainPhoto');
-        $auxiliaryPhotoFiles = $symfonyRequest->files->all('auxiliaryPhotos');
+        $rawAuxiliaryPhotoFiles = $symfonyRequest->files->get('auxiliaryPhotos', []);
+        $auxiliaryPhotoFiles = is_array($rawAuxiliaryPhotoFiles)
+            ? $rawAuxiliaryPhotoFiles
+            : [$rawAuxiliaryPhotoFiles];
 
         if (!$mainPhotoFile instanceof \Symfony\Component\HttpFoundation\File\UploadedFile) {
             return $this->json(['error' => 'mainPhoto is required and must be a valid file'], Response::HTTP_UNPROCESSABLE_ENTITY);

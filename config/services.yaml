@@ -27,3 +27,7 @@ services:
     App\Service\GeminiService:
         arguments:
             $geminiApiKey: '%env(GEMINI_API_KEY)%'
+
+    App\Service\FileUploader:
+        arguments:
+            $productUploadsDirectory: '%product_uploads_directory%'
