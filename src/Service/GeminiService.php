@@ -5,6 +5,8 @@ namespace App\Service;
 use Psr\Log\LoggerInterface;
 use Symfony\Component\HttpClient\Exception\ClientException;
 use Symfony\Component\HttpClient\Exception\ServerException;
+use Symfony\Contracts\Cache\CacheInterface;
+use Symfony\Contracts\Cache\ItemInterface;
 use Symfony\Contracts\HttpClient\Exception\TransportExceptionInterface;
 use Symfony\Component\HttpKernel\Exception\ServiceUnavailableHttpException;
 use Symfony\Component\HttpKernel\Exception\TooManyRequestsHttpException;
@@ -16,23 +18,20 @@ use Symfony\Contracts\HttpClient\HttpClientInterface;
  */
 class GeminiService
 {
-    private const PROMPT = 'Опиши этот товар кратко на русском языке: тип товара, цвет, материал, бренд (если видно). '
-        . 'Только текст, без оформления, 2-3 предложения.';
-    private const PROVIDER_GEMINI = 'gemini';
-    private const PROVIDER_OLLAMA = 'ollama';
-    private const OLLAMA_TIMEOUT_SECONDS = 120;
+    private const PROMPT = 'Кратко опиши товар на русском: тип, цвет, материал, бренд если виден. 1-2 предложения, без оформления.';
     // gemini-flash-latest: confirmed alias from check_models.php for v1beta
     private const API_URL = 'https://generativelanguage.googleapis.com/v1beta/models/gemini-3-flash-preview:generateContent';
-    private const MAX_IMAGE_SIZE = 512;
-    private const MAX_RETRIES = 5;  // Increased to 5 for better stability
+    private const MAX_IMAGE_SIZE = 320;
+    private const MAX_OUTPUT_TOKENS = 96;
+    private const MAX_RETRIES = 2;
+    private const REQUEST_TIMEOUT_SECONDS = 20;
+    private const CACHE_TTL_SECONDS = 2592000;
 
     public function __construct(
         private readonly HttpClientInterface $httpClient,
+        private readonly CacheInterface $cache,
         private readonly LoggerInterface $logger,
-        private readonly string $geminiApiKey,
-        private readonly string $aiProvider,
-        private readonly string $ollamaBaseUrl,
-        private readonly string $ollamaModel,
+        private readonly string $geminiApiKey
     ) {}
 
     /**
@@ -47,14 +46,16 @@ class GeminiService
         }
 
         $actualMimeType = extension_loaded('gd') ? 'image/jpeg' : $mimeType;
+        $cacheKey = 'gemini_description_' . hash('sha256', $imageData . '|' . $actualMimeType . '|' . self::PROMPT);
 
-        return match ($this->aiProvider) {
-            self::PROVIDER_OLLAMA => $this->describeWithOllama($imageData),
-            default => $this->describeWithGemini($imageData, $actualMimeType),
-        };
+        return $this->cache->get($cacheKey, function (ItemInterface $item) use ($imageData, $actualMimeType) {
+            $item->expiresAfter(self::CACHE_TTL_SECONDS);
+
+            return $this->fetchDescription($imageData, $actualMimeType);
+        });
     }
 
-    private function describeWithGemini(string $imageData, string $mimeType): string
+    private function fetchDescription(string $imageData, string $actualMimeType): string
     {
         $imageBase64 = base64_encode($imageData);
 
@@ -62,13 +63,13 @@ class GeminiService
             'contents' => [
                 [
                     'parts' => [
-                        ['inline_data' => ['mime_type' => $mimeType, 'data' => $imageBase64]],
+                        ['inline_data' => ['mime_type' => $actualMimeType, 'data' => $imageBase64]],
                         ['text' => self::PROMPT],
                     ],
                 ],
             ],
             'generationConfig' => [
-                'maxOutputTokens' => 256,
+                'maxOutputTokens' => self::MAX_OUTPUT_TOKENS,
                 'temperature'     => 0.2,
             ],
         ];
@@ -84,13 +85,15 @@ class GeminiService
                     [
                         'headers' => ['Content-Type' => 'application/json'],
                         'json'    => $body,
+                        'timeout' => self::REQUEST_TIMEOUT_SECONDS,
+                        'max_duration' => self::REQUEST_TIMEOUT_SECONDS,
                     ]
                 );
 
                 $data = $response->toArray();
-                $text = $data['candidates'][0]['content']['parts'][0]['text'] ?? null;
+                $text = trim((string) ($data['candidates'][0]['content']['parts'][0]['text'] ?? ''));
                 
-                if ($text === null) {
+                if ($text === '') {
                     $finishReason = $data['candidates'][0]['finishReason'] ?? 'UNKNOWN';
                     $this->logger->warning('Gemini returned no text', [
                         'finishReason' => $finishReason,
@@ -109,8 +112,8 @@ class GeminiService
                     'attempt' => $attempt
                 ]);
 
-                if (in_array($statusCode, [429, 503]) && $attempt < self::MAX_RETRIES) {
-                    $wait = $this->getRetryDelay($errorBody) ?: ($attempt * 5);
+                if ($statusCode === 503 && $attempt < self::MAX_RETRIES) {
+                    $wait = min($this->getRetryDelay($errorBody) ?: $attempt, 2);
                     sleep($wait);
                     continue;
                 }
@@ -134,7 +137,7 @@ class GeminiService
                 ]);
 
                 if ($attempt < self::MAX_RETRIES) {
-                    sleep($attempt * 2);
+                    sleep(1);
                     continue;
                 }
 
@@ -143,74 +146,6 @@ class GeminiService
         }
 
         throw new ServiceUnavailableHttpException(null, 'Gemini API failed after all retries.');
-    }
-
-    private function describeWithOllama(string $imageData): string
-    {
-        try {
-            $response = $this->httpClient->request(
-                'POST',
-                rtrim($this->ollamaBaseUrl, '/') . '/api/generate',
-                [
-                    'headers' => ['Content-Type' => 'application/json'],
-                    'json' => [
-                        'model' => $this->ollamaModel,
-                        'prompt' => self::PROMPT,
-                        'images' => [base64_encode($imageData)],
-                        'stream' => false,
-                        'keep_alive' => '10m',
-                    ],
-                    'timeout' => self::OLLAMA_TIMEOUT_SECONDS,
-                ]
-            );
-
-            $data = $response->toArray();
-            $text = trim((string) ($data['response'] ?? ''));
-
-            if ($text === '') {
-                $this->logger->warning('Ollama returned no text', [
-                    'model' => $this->ollamaModel,
-                    'data' => $data,
-                ]);
-
-                return '';
-            }
-
-            return $text;
-        } catch (ClientException|ServerException $e) {
-            $statusCode = $e->getResponse()->getStatusCode();
-            $errorBody = $e->getResponse()->getContent(false);
-
-            $this->logger->error('Ollama API error', [
-                'status_code' => $statusCode,
-                'error' => $errorBody,
-                'model' => $this->ollamaModel,
-                'base_url' => $this->ollamaBaseUrl,
-            ]);
-
-            if ($statusCode === 404) {
-                throw new ServiceUnavailableHttpException(
-                    null,
-                    sprintf('Ollama model "%s" is not available. Run "ollama pull %s".', $this->ollamaModel, $this->ollamaModel)
-                );
-            }
-
-            throw new ServiceUnavailableHttpException(
-                null,
-                sprintf('Ollama API error (HTTP %d).', $statusCode)
-            );
-        } catch (TransportExceptionInterface $e) {
-            $this->logger->error('Ollama transport error', [
-                'error' => $e->getMessage(),
-                'model' => $this->ollamaModel,
-                'base_url' => $this->ollamaBaseUrl,
-            ]);
-
-            throw new ServiceUnavailableHttpException(
-                null,
-                'Ollama is unreachable. Start Ollama and check OLLAMA_BASE_URL.'
-            );
-        }
     }
 
     /**
@@ -261,7 +196,7 @@ class GeminiService
 
         if ($origW <= $max && $origH <= $max) {
             ob_start();
-            imagejpeg($src, null, 80);
+            imagejpeg($src, null, 70);
             $output = ob_get_clean();
             imagedestroy($src);
             return $output;
@@ -280,7 +215,7 @@ class GeminiService
         imagedestroy($src);
 
         ob_start();
-        imagejpeg($dst, null, 80);
+        imagejpeg($dst, null, 70);
         $output = ob_get_clean();
         imagedestroy($dst);
 
