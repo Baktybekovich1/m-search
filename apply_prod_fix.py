@@ -30,6 +30,11 @@ try:
     # 2. Upload .env (make sure it contains the GEMINI_API_KEY)
     print("Uploading .env...")
     sftp.put('.env', f'{REMOTE_PATH}/.env')
+
+    # 3. Upload modified PHP/YAML files for the fix
+    print("Uploading fixed services.yaml and GeminiService.php...")
+    sftp.put('config/services.yaml', f'{REMOTE_PATH}/config/services.yaml')
+    sftp.put('src/Service/GeminiService.php', f'{REMOTE_PATH}/src/Service/GeminiService.php')
     sftp.close()
 
     # 3. Restart containers and rebuild

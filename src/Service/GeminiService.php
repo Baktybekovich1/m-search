@@ -32,7 +32,11 @@ class GeminiService
         private readonly CacheInterface $cache,
         private readonly LoggerInterface $logger,
         private readonly string $geminiApiKey
-    ) {}
+    ) {
+        if (empty($this->geminiApiKey)) {
+            $this->logger->error('Gemini API key is missing or empty.');
+        }
+    }
 
     /**
      * Analyzes the given image file and returns a search-friendly description.
