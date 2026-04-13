@@ -20,7 +20,7 @@ class GeminiService
 {
     private const PROMPT = 'Кратко опиши товар на русском: тип, цвет, материал, бренд если виден. 1-2 предложения, без оформления.';
     // gemini-flash-latest: confirmed alias from check_models.php for v1beta
-    private const API_URL = 'https://generativelanguage.googleapis.com/v1beta/models/gemini-3-flash-preview:generateContent';
+    private const API_ENDPOINT = '/models/gemini-3-flash-preview:generateContent';
     private const MAX_IMAGE_SIZE = 320;
     private const MAX_OUTPUT_TOKENS = 96;
     private const MAX_RETRIES = 2;
@@ -31,7 +31,9 @@ class GeminiService
         private readonly HttpClientInterface $httpClient,
         private readonly CacheInterface $cache,
         private readonly LoggerInterface $logger,
-        private readonly string $geminiApiKey
+        private readonly string $geminiApiKey,
+        private readonly string $geminiApiBaseUrl,
+        private readonly string $proxy = ''
     ) {
         if (empty($this->geminiApiKey)) {
             $this->logger->error('Gemini API key is missing or empty.');
@@ -83,15 +85,23 @@ class GeminiService
             $statusCode = 0;
 
             try {
+                $url = rtrim($this->geminiApiBaseUrl, '/') . self::API_ENDPOINT;
+                
+                $options = [
+                    'headers' => ['Content-Type' => 'application/json'],
+                    'json'    => $body,
+                    'timeout' => self::REQUEST_TIMEOUT_SECONDS,
+                    'max_duration' => self::REQUEST_TIMEOUT_SECONDS,
+                ];
+
+                if (!empty($this->proxy)) {
+                    $options['proxy'] = $this->proxy;
+                }
+
                 $response = $this->httpClient->request(
                     'POST',
-                    self::API_URL . '?key=' . $this->geminiApiKey,
-                    [
-                        'headers' => ['Content-Type' => 'application/json'],
-                        'json'    => $body,
-                        'timeout' => self::REQUEST_TIMEOUT_SECONDS,
-                        'max_duration' => self::REQUEST_TIMEOUT_SECONDS,
-                    ]
+                    $url . '?key=' . $this->geminiApiKey,
+                    $options
                 );
 
                 $data = $response->toArray();

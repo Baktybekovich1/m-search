@@ -8,6 +8,8 @@
 # https://symfony.com/doc/current/best_practices.html#use-parameters-for-application-configuration
 parameters:
     env(GEMINI_API_KEY): ''
+    env(GEMINI_API_BASE_URL): 'https://generativelanguage.googleapis.com/v1beta'
+    env(GEMINI_PROXY): ''
     product_uploads_directory: '%kernel.project_dir%/public/uploads/products'
 
 services:
@@ -30,6 +32,8 @@ services:
             $cache: '@cache.app'
             $logger: '@logger'
             $geminiApiKey: '%env(GEMINI_API_KEY)%'
+            $geminiApiBaseUrl: '%env(GEMINI_API_BASE_URL)%'
+            $proxy: '%env(GEMINI_PROXY)%'
 
     App\Service\FileUploader:
         arguments:

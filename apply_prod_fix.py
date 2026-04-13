@@ -22,16 +22,18 @@ try:
     ssh.connect(HOST, username=USER, password=PASS, timeout=15)
     print("✅ Connected to Production Server\n")
 
-    # 1. Upload updated docker-compose.prod.yml
+    # 1. Update project from git first
+    print("\nUpdating project from master branch...")
+    run_remote(ssh, f"cd {REMOTE_PATH} && git pull origin master")
+
+    # 2. Upload fixed configuration and code files
     sftp = ssh.open_sftp()
     print("Uploading updated docker-compose.prod.yml...")
     sftp.put('docker-compose.prod.yml', f'{REMOTE_PATH}/docker-compose.prod.yml')
     
-    # 2. Upload .env (make sure it contains the GEMINI_API_KEY)
-    print("Uploading .env...")
+    print("Uploading .env with Gateway config...")
     sftp.put('.env', f'{REMOTE_PATH}/.env')
 
-    # 3. Upload modified PHP/YAML files for the fix
     print("Uploading fixed services.yaml and GeminiService.php...")
     sftp.put('config/services.yaml', f'{REMOTE_PATH}/config/services.yaml')
     sftp.put('src/Service/GeminiService.php', f'{REMOTE_PATH}/src/Service/GeminiService.php')
@@ -39,7 +41,7 @@ try:
 
     # 3. Restart containers and rebuild
     print("\nRestarting containers and rebuilding with new configuration...")
-    run_remote(ssh, f"cd {REMOTE_PATH} && git pull origin master && docker-compose -f docker-compose.prod.yml up -d --build --force-recreate")
+    run_remote(ssh, f"cd {REMOTE_PATH} && docker-compose -f docker-compose.prod.yml up -d --build --force-recreate")
 
     # 4. Clear cache inside container
     print("\nClearing Symfony cache in container...")

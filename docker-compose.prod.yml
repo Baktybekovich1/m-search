@@ -10,6 +10,8 @@ services:
       APP_ENV: prod
       DATABASE_URL: "postgresql://app:${POSTGRES_PASSWORD:-aowfhwopjfijanfoawkf}@postgresql:5432/app?serverVersion=16&charset=utf8"
       GEMINI_API_KEY: ${GEMINI_API_KEY}
+      GEMINI_API_BASE_URL: ${GEMINI_API_BASE_URL}
+      GEMINI_PROXY: ${GEMINI_PROXY}
     restart: unless-stopped
 
   nginx:
