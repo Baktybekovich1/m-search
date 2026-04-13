@@ -20,10 +20,10 @@ class GeminiService
 {
     private const PROMPT = 'Кратко опиши товар на русском: тип, цвет, материал, бренд если виден. 1-2 предложения, без оформления.';
     // gemini-flash-latest: confirmed alias from check_models.php for v1beta
-    private const API_ENDPOINT = '/models/gemini-3-flash-preview:generateContent';
+    private const API_ENDPOINT = '/models/gemini-2.0-flash:generateContent';
     private const MAX_IMAGE_SIZE = 320;
     private const MAX_OUTPUT_TOKENS = 96;
-    private const MAX_RETRIES = 2;
+    private const MAX_RETRIES = 3;
     private const REQUEST_TIMEOUT_SECONDS = 20;
     private const CACHE_TTL_SECONDS = 2592000;
 
@@ -126,9 +126,14 @@ class GeminiService
                     'attempt' => $attempt
                 ]);
 
-                if ($statusCode === 503 && $attempt < self::MAX_RETRIES) {
-                    $wait = min($this->getRetryDelay($errorBody) ?: $attempt, 2);
-                    sleep($wait);
+                if (in_array($statusCode, [429, 503]) && $attempt < self::MAX_RETRIES) {
+                    $wait = $this->getRetryDelay($errorBody) ?: (int) pow(2, $attempt);
+                    $this->logger->info('Retrying Gemini API request', [
+                        'status_code' => $statusCode,
+                        'attempt' => $attempt,
+                        'wait_seconds' => $wait
+                    ]);
+                    sleep(min($wait, 10));
                     continue;
                 }
 
